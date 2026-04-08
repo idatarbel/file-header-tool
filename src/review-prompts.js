@@ -558,6 +558,132 @@ FORMAT:
   };
 }
 
+function testCoveragePrompt(fileContent, language, filePath, allFiles) {
+  const fileListContext = allFiles
+    ? `\n\nFull list of source files in the project:\n${allFiles.join("\n")}`
+    : "";
+
+  return {
+    responseType: "report",
+    systemPrompt: `You are a senior QA architect analyzing a ${language.name} project for test coverage across all test types.
+
+ANALYZE THE PROJECT FOR THESE TEST TYPES:
+
+1. **Unit Tests** — Tests that verify individual functions, methods, or classes in isolation
+2. **Integration Tests** — Tests that verify interactions between modules, services, databases, or APIs
+3. **End-to-End Tests** — Tests that simulate user workflows through the full application stack
+4. **Performance Tests** — Load tests, stress tests, benchmarks, response time tests
+5. **Contract Tests** — API contract tests, schema validation tests, consumer-driven contract tests
+
+FOR EACH TEST TYPE:
+- Create separate subsections if the project has multiple frontends, backends, APIs, or services
+  (e.g., "Unit Tests — Admin Backend", "Unit Tests — Next.js Frontend", "Unit Tests — Bot Services")
+- Within each subsection, list each test with:
+  - Sequential number (unique across the entire report)
+  - Test name
+  - Description of what it tests
+  - Number of source files it covers
+  - Estimated % coverage of the relevant code area
+
+ALSO IDENTIFY:
+- Source files/modules with ZERO test coverage
+- Critical paths (auth, payments, data mutations) that lack tests
+- Test infrastructure present (frameworks, config files, test utilities)
+
+RULES:
+1. Be thorough — examine test directories, test config files, and test file naming patterns
+2. If a test type has no tests at all, report it as "No tests found" with 0% coverage
+3. Estimate coverage based on what the tests actually test vs. what source files exist
+4. Return ONLY a markdown report. No code modifications.
+
+FORMAT:
+## Test Coverage Report
+
+### Summary
+| Test Type | Test Count | Files Covered | Overall Coverage |
+|-----------|-----------|---------------|-----------------|
+| Unit Tests | 12 | 8/25 | 32% |
+| Integration Tests | 3 | 5/25 | 20% |
+| ... | ... | ... | ... |
+
+### Unit Tests — [Component/Service Name]
+
+| # | Test Name | Description | Files Covered | Coverage |
+|---|-----------|-------------|---------------|----------|
+| 1 | test_user_creation | Verifies user model creation with valid/invalid data | 2 | 85% |
+
+### Gaps — Files With No Test Coverage
+| # | File | Type | Risk | Recommendation |
+|---|------|------|------|----------------|
+| 1 | src/auth/login.py | Authentication | Critical | Add unit + integration tests |`,
+
+    userPrompt: `Analyze this ${language.name} file for test coverage. Identify existing tests and gaps (${filePath}):\n\n${fileContent}${fileListContext}`,
+  };
+}
+
+function testExecutionPrompt(fileContent, language, filePath, testType) {
+  const testTypeNames = {
+    unit: "Unit Tests",
+    integration: "Integration Tests",
+    e2e: "End-to-End Tests",
+    performance: "Performance Tests",
+    contract: "Contract Tests",
+  };
+  const testTypeName = testTypeNames[testType] || testType;
+
+  return {
+    responseType: "report",
+    systemPrompt: `You are a senior QA engineer analyzing a ${language.name} project to identify and document how to execute ${testTypeName}.
+
+ANALYZE THE FILE FOR:
+1. Test framework being used (jest, vitest, pytest, go test, cargo test, mocha, playwright, cypress, k6, artillery, pact, etc.)
+2. Test configuration files and their settings
+3. Test scripts defined in package.json, Makefile, pyproject.toml, etc.
+4. Test file locations and naming patterns
+5. Required environment setup (env vars, databases, services)
+
+PROVIDE:
+1. The exact command(s) to run ${testTypeName}
+2. Any required setup steps (start services, seed data, etc.)
+3. Expected output format
+4. How to interpret results
+
+If no ${testTypeName} exist in this project, clearly state that and recommend:
+- Which framework to use
+- Where to put test files
+- A starter test example
+
+RULES:
+1. Be specific — use actual file paths, actual commands from the project
+2. Return ONLY a markdown report
+3. Include the exact shell commands needed
+
+FORMAT:
+## ${testTypeName} Execution Report
+
+### Framework
+[Framework name and version]
+
+### Commands
+\`\`\`bash
+[exact commands to run]
+\`\`\`
+
+### Setup Required
+[any setup steps]
+
+### Test Files Found
+| # | File | Tests | Description |
+|---|------|-------|-------------|
+| 1 | tests/test_auth.py | 5 | Authentication flow tests |
+
+### Results
+[to be filled after execution]`,
+
+    userPrompt: `Analyze this ${language.name} file to identify ${testTypeName} and how to execute them (${filePath}):\n\n${fileContent}`,
+  };
+}
+
 module.exports = {
   exceptionsPrompt,
   namingPrompt,
@@ -573,4 +699,6 @@ module.exports = {
   loggingPrompt,
   accessibilityPrompt,
   performancePrompt,
+  testCoveragePrompt,
+  testExecutionPrompt,
 };

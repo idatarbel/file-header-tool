@@ -7,7 +7,7 @@ const { discoverFiles, writeMarker, hasMarker } = require("./src/files");
 const { getLanguage } = require("./src/languages");
 const { buildPrompt } = require("./src/prompts");
 const { generate, checkConnection, getBackendName, DEFAULT_MODEL } = require("./src/ollama");
-const { displayMenu, promptChoice, getReportOnlyTasks, getCodeModifyTasks } = require("./src/menu");
+const { displayMenu, promptChoice, displayTestSubmenu, promptTestChoice, getReportOnlyTasks, getCodeModifyTasks } = require("./src/menu");
 const { createReporter } = require("./src/reporter");
 const reviewPrompts = require("./src/review-prompts");
 const { runSetup, getAuthorInfo } = require("./src/setup");
@@ -56,7 +56,8 @@ Options:
                     exceptions, naming, hardcoded, deadcode, security,
                     readme, secrets, disconnects, complexity,
                     dependencies, dry, logging, accessibility,
-                    performance, comments, wdib, all
+                    performance, testcoverage, testexec, comments,
+                    wdib, all
   --verbose       Show detailed progress
   --help, -h      Show this help message
 `);
@@ -117,7 +118,8 @@ function getTaskPrompt(taskId, fileContent, language, filePath) {
     case "dry":           return reviewPrompts.dryViolationsPrompt(fileContent, language, filePath);
     case "logging":       return reviewPrompts.loggingPrompt(fileContent, language, filePath);
     case "accessibility": return reviewPrompts.accessibilityPrompt(fileContent, language, filePath);
-    case "performance":   return reviewPrompts.performancePrompt(fileContent, language, filePath);
+    case "performance":    return reviewPrompts.performancePrompt(fileContent, language, filePath);
+    case "testcoverage":  return reviewPrompts.testCoveragePrompt(fileContent, language, filePath);
     case "comments":   {
       const authorInfo = getAuthorInfo();
       const p = buildPrompt(fileContent, language, filePath, authorInfo);
@@ -244,6 +246,7 @@ async function runTask(taskId, files, args, reporter) {
     logging: "Logging & Observability",
     accessibility: "Accessibility Audit",
     performance: "Performance Red Flags",
+    testcoverage: "Test Coverage Report",
     comments: "Add Code Comments",
   };
 
@@ -307,6 +310,112 @@ async function runAll(files, args, reporter) {
   await runTask("comments", files, args, reporter);
 }
 
+// --- Run Test Execution (special case — sub-menu + actual test runs) ---
+async function runTestExecution(files, args, reporter) {
+  const { execSync } = require("child_process");
+
+  displayTestSubmenu();
+  const testChoice = await promptTestChoice();
+  if (!testChoice || testChoice.id === "none") {
+    console.log("Test execution cancelled.");
+    return;
+  }
+
+  const testTypes = testChoice.id === "all"
+    ? ["unit", "integration", "e2e", "performance", "contract"]
+    : [testChoice.id];
+
+  const testTypeNames = {
+    unit: "Unit Tests",
+    integration: "Integration Tests",
+    e2e: "End-to-End Tests",
+    performance: "Performance Tests",
+    contract: "Contract Tests",
+  };
+
+  if (reporter) {
+    reporter.appendSection("Test Execution", "");
+  }
+
+  // Step 1: Use AI to analyze project and find test commands
+  console.log("\n--- Analyzing test configuration ---\n");
+
+  // Find config/manifest files for test analysis
+  const configFiles = files.filter((f) => {
+    const base = path.basename(f).toLowerCase();
+    return base === "package.json" || base === "pyproject.toml" || base === "cargo.toml"
+      || base === "go.mod" || base === "makefile" || base === "gemfile"
+      || base.includes("vitest") || base.includes("jest") || base.includes("pytest")
+      || base.includes("playwright") || base.includes("cypress");
+  });
+
+  for (const testType of testTypes) {
+    const typeName = testTypeNames[testType];
+    console.log(`\n--- ${typeName} ---\n`);
+
+    // Ask AI to identify test commands for this type
+    for (const configFile of configFiles) {
+      const content = fs.readFileSync(configFile, "utf8");
+      const language = getLanguage(configFile);
+      if (!language) continue;
+
+      const relPath = path.relative(ROOT_DIR, configFile);
+      const promptData = reviewPrompts.testExecutionPrompt(content, language, relPath, testType);
+
+      process.stdout.write(`  Analyzing ${relPath} for ${typeName}... `);
+
+      try {
+        const response = await generate(promptData.systemPrompt, promptData.userPrompt, { model: args.model });
+        const cleaned = cleanResponse(response);
+
+        if (reporter && cleaned.trim()) {
+          reporter.appendFinding(`${typeName} — ${relPath}`, cleaned);
+        }
+
+        console.log("done");
+
+        // Try to extract and run the test command
+        const cmdMatch = cleaned.match(/```(?:bash|sh|shell)?\n((?:npm|npx|yarn|pnpm|pytest|python|go|cargo|make|bundle)\s[^\n]+)/m);
+        if (cmdMatch) {
+          const testCmd = cmdMatch[1].trim();
+          console.log(`  Running: ${testCmd}`);
+
+          try {
+            const output = execSync(testCmd, {
+              cwd: ROOT_DIR,
+              encoding: "utf8",
+              timeout: 300000, // 5 min timeout for tests
+              stdio: ["pipe", "pipe", "pipe"],
+            });
+
+            console.log("  Tests completed successfully.");
+            if (reporter) {
+              reporter.appendFinding(`${typeName} — Execution Results`, `\`\`\`\n${output}\n\`\`\``);
+            }
+          } catch (testErr) {
+            const output = (testErr.stdout || "") + "\n" + (testErr.stderr || "");
+            console.log(`  Tests completed with failures.`);
+            if (reporter) {
+              reporter.appendFinding(`${typeName} — Execution Results (with failures)`, `\`\`\`\n${output}\n\`\`\``);
+            }
+          }
+        } else {
+          console.log(`  No executable test command found for ${typeName}.`);
+        }
+      } catch (err) {
+        console.log(`ERROR: ${err.message}`);
+      }
+    }
+
+    if (configFiles.length === 0) {
+      console.log("  No configuration files found to analyze.");
+      if (reporter) {
+        reporter.appendFinding(typeName, "No configuration or manifest files found in the project.");
+      }
+    }
+  }
+}
+
 // --- Main ---
 async function main() {
   const args = parseArgs(process.argv);
@@ -327,6 +436,12 @@ async function main() {
     displayMenu();
     selectedTask = await promptChoice();
     if (!selectedTask) process.exit(1);
+  }
+
+  // Handle exit
+  if (selectedTask.id === "exit") {
+    console.log("\nGoodbye.\n");
+    process.exit(0);
   }
 
   // Handle WDIB task (no local file processing needed, no AI backend required)
@@ -387,6 +502,8 @@ async function main() {
     await runAll(files, args, reporter);
   } else if (selectedTask.id === "readme") {
     await runReadmeTask(args, reporter);
+  } else if (selectedTask.id === "testexec") {
+    await runTestExecution(files, args, reporter);
   } else {
     await runTask(selectedTask.id, files, args, reporter);
   }
