@@ -56,7 +56,7 @@ Options:
                     exceptions, naming, hardcoded, deadcode, security,
                     readme, secrets, disconnects, complexity,
                     dependencies, dry, logging, accessibility,
-                    performance, comments, all
+                    performance, comments, wdib, all
   --verbose       Show detailed progress
   --help, -h      Show this help message
 `);
@@ -319,16 +319,6 @@ async function main() {
   // Run first-time setup if author/company not configured
   await runSetup();
 
-  // Check AI backend connection
-  if (!args.dryRun) {
-    const connected = await checkConnection();
-    if (!connected) {
-      console.error("Error: Cannot connect to AI backend.");
-      console.error("Configure Anthropic API key in ~/.codecontrolsystem/config.json or start Ollama with: ollama serve");
-      process.exit(1);
-    }
-  }
-
   // Get task selection
   let selectedTask;
   if (args.task) {
@@ -337,6 +327,23 @@ async function main() {
     displayMenu();
     selectedTask = await promptChoice();
     if (!selectedTask) process.exit(1);
+  }
+
+  // Handle WDIB task (no local file processing needed, no AI backend required)
+  if (selectedTask.id === "wdib") {
+    const { runWdib } = require("./src/wdib");
+    await runWdib();
+    process.exit(0);
+  }
+
+  // Check AI backend connection
+  if (!args.dryRun) {
+    const connected = await checkConnection();
+    if (!connected) {
+      console.error("Error: Cannot connect to AI backend.");
+      console.error("Configure Anthropic API key in ~/.codecontrolsystem/config.json or start Ollama with: ollama serve");
+      process.exit(1);
+    }
   }
 
   console.log(`\n=== CodeControlSystem ===\n`);

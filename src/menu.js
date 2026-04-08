@@ -20,7 +20,8 @@ const MENU_OPTIONS = [
   { key: 13, label: "Accessibility Audit",    id: "accessibility", modifiesCode: false, description: "WCAG 2.1 AA compliance check" },
   { key: 14, label: "Performance Red Flags",  id: "performance",   modifiesCode: false, description: "N+1 queries, re-renders, memory leaks" },
   { key: 15, label: "Add Code Comments",      id: "comments",      modifiesCode: true,  description: "AI-powered documentation comments" },
-  { key: 16, label: "All",                    id: "all",           modifiesCode: true,  description: "Run all of the above" },
+  { key: 16, label: "WhatDidIBuild Output",  id: "wdib",          modifiesCode: false, description: "Generate video modules and documentation via WhatDidIBuild.ai" },
+  { key: 17, label: "All",                    id: "all",           modifiesCode: true,  description: "Run all of the above" },
 ];
 
 const MAX_CHOICE = MENU_OPTIONS.length;
@@ -59,7 +60,7 @@ function getOptionById(id) {
 }
 
 function getReportOnlyTasks() {
-  return MENU_OPTIONS.filter((o) => !o.modifiesCode && o.id !== "all");
+  return MENU_OPTIONS.filter((o) => !o.modifiesCode && o.id !== "all" && o.id !== "wdib");
 }
 
 function getCodeModifyTasks() {
